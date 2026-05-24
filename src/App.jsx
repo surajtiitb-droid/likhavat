@@ -171,14 +171,30 @@ export default function Rojanama() {
   const [importMsg,  setImportMsg]  = useState(null); // "Imported 12 entries"
 
   // ── Mobile layout state ───────────────────────────────────────────
-  // 'list' = sidebar visible, 'editor' = editor visible
   const [isMobile,   setIsMobile]   = useState(() => window.innerWidth <= 768);
   const [mobileView, setMobileView] = useState("list");
+  // kbOffset: pixels the virtual keyboard pushes up from viewport bottom
+  const [kbOffset,   setKbOffset]   = useState(0);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Track virtual keyboard height via visualViewport
+  useEffect(() => {
+    if (!window.visualViewport) return;
+    const onVV = () => {
+      const kb = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+      setKbOffset(kb > 50 ? kb : 0);
+    };
+    window.visualViewport.addEventListener("resize", onVV);
+    window.visualViewport.addEventListener("scroll", onVV);
+    return () => {
+      window.visualViewport.removeEventListener("resize", onVV);
+      window.visualViewport.removeEventListener("scroll", onVV);
+    };
   }, []);
 
   useEffect(() => { suggRef.current    = sugg;    }, [sugg]);
@@ -325,7 +341,8 @@ export default function Rojanama() {
   const ime = (e, val, setVal, ref, setPos) => {
     if (!hindi) return;
 
-    if (e.key === "Backspace") {
+    // e.keyCode === 8 fallback: some Android keyboards fire key="Unidentified"
+    if (e.key === "Backspace" || e.keyCode === 8) {
       if (suggRef.current) {
         setSugg(null); setSuggIdx(0);
         lastConv.current = null;
@@ -377,6 +394,16 @@ export default function Rojanama() {
   const imeInput = async (e, val, setVal, ref, setPos) => {
     if (!hindi) return;
 
+    // Backspace fallback for mobile (keydown fires "Unidentified" on some keyboards)
+    if (e.inputType === "deleteContentBackward") {
+      if (suggRef.current) {
+        setSugg(null); setSuggIdx(0);
+        lastConv.current = null;
+        // no preventDefault → deletion proceeds normally
+      }
+      return;
+    }
+
     const isSpace     = e.data === " ";
     const isLineBreak = e.inputType === "insertLineBreak";
     if (!isSpace && !isLineBreak) return;
@@ -426,6 +453,12 @@ export default function Rojanama() {
     setPos(finalPos);
     lastConv.current = { roman: word, words: finalWords, pre, sep, after,
       posBase: pre.length, pos: finalPos, setVal, setPos };
+
+    // Mobile: show suggestions immediately after conversion (no backspace needed)
+    if (isMobile && finalWords.length > 1) {
+      setSugg(lastConv.current);
+      setSuggIdx(0);
+    }
   };
 
   const addTag = e => {
@@ -849,13 +882,16 @@ export default function Rojanama() {
 
       {/* ══ SUGGESTIONS POPUP ══ */}
       {sugg && (
-        <div style={{ position:"fixed", bottom:52, left:"50%", transform:"translateX(-50%)",
+        <div style={{
+          position:"fixed",
+          bottom: kbOffset + 8,   // float above virtual keyboard
+          left:"50%", transform:"translateX(-50%)",
           background:"#1A1208", border:"1px solid #C28640", borderRadius:10,
           padding:"14px 10px", display:"flex", alignItems:"center", gap:8, zIndex:40,
           boxShadow:"0 4px 24px rgba(0,0,0,0.6)", maxWidth:"92vw", flexWrap:"wrap" }}>
           <span style={{ fontSize:10, color:"#7A5022", padding:"2px 8px 2px 4px",
             borderRight:"1px solid #201408", marginRight:2, whiteSpace:"nowrap" }}>
-            ←→ navigate · Enter select
+            {isMobile ? "tap to select" : "←→ navigate · Enter select"}
           </span>
           {sugg.words.map((w, i) => {
             const isEng    = /^[a-zA-Z]+$/.test(w);
