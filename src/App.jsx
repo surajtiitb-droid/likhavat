@@ -128,6 +128,7 @@ export default function Rojanama() {
   const edRef     = useRef({});   // current edit state ref
   const saveTimer  = useRef(null);
   const lastConv   = useRef(null); // {roman, words, pre, sep, pos}
+  const suggRef    = useRef(null);
 
   const [entries,  setEntries]  = useState([]);
   const [cid,      setCid]      = useState(null);
@@ -145,6 +146,8 @@ export default function Rojanama() {
   const [tPos,     setTPos]     = useState(null);
   const [bPos,     setBPos]     = useState(null);
   const [sugg,     setSugg]     = useState(null);  // {pre,sep,after,words,posBase}
+  const [suggIdx,  setSuggIdx]  = useState(0);
+  useEffect(() => { suggRef.current = sugg; }, [sugg]);
 
   // Sync refs
   useEffect(() => { eRef.current = entries; }, [entries]);
@@ -249,13 +252,26 @@ export default function Rojanama() {
       const lc  = lastConv.current;
       if (lc && lc.setVal === setVal && pos === lc.pos) {
         e.preventDefault();
-        setSugg(lc);
+        setSugg(lc); setSuggIdx(0);
         return;
       }
       setSugg(null);
       return;
     }
 
+    // Arrow key navigation through suggestions
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      if (!sugg) return;
+      e.preventDefault();
+      setSuggIdx(i => {
+        const next = e.key === "ArrowRight"
+          ? (i + 1) % sugg.words.length
+          : (i - 1 + sugg.words.length) % sugg.words.length;
+        return next;
+      });
+      return;
+    }
+    if (e.key === "Escape" || (e.key === "Enter" && suggRef.current)) { setSugg(null); setSuggIdx(0); return; }
     if (e.key !== " " && e.key !== "Enter") return;
     e.preventDefault();
     setSugg(null);
@@ -612,33 +628,35 @@ export default function Rojanama() {
       {sugg && (
         <div style={{ position:"absolute", bottom:52, left:"50%", transform:"translateX(-50%)",
           background:"#1A1208", border:"1px solid #C28640", borderRadius:10,
-          padding:"8px 6px", display:"flex", alignItems:"center", gap:4, zIndex:40,
-          boxShadow:"0 4px 24px rgba(0,0,0,0.6)", maxWidth:"90vw", flexWrap:"wrap" }}>
+          padding:"14px 10px", display:"flex", alignItems:"center", gap:8, zIndex:40,
+          boxShadow:"0 4px 24px rgba(0,0,0,0.6)", maxWidth:"92vw", flexWrap:"wrap" }}>
           <span style={{ fontSize:10, color:"#7A5022", padding:"2px 8px 2px 4px",
             borderRight:"1px solid #201408", marginRight:2, whiteSpace:"nowrap" }}>
-            Pick word:
+            ←→ navigate · Enter select
           </span>
           {sugg.words.map((w, i) => {
             const isEng = /^[a-zA-Z]+$/.test(w);
-            const isCur = i === 0;
+            const isActive = i === suggIdx;
+            const pickWord = () => {
+              sugg.setVal(v => {
+                const cur = sugg.words[0];
+                const idx = v.indexOf(sugg.pre + cur + sugg.sep);
+                if (idx === -1) return v;
+                return v.slice(0,idx) + sugg.pre + w + sugg.sep + v.slice(idx + sugg.pre.length + cur.length + sugg.sep.length);
+              });
+              sugg.setPos(sugg.posBase + w.length + 1);
+              setSugg(null);
+            };
             return (
-              <button key={i} onClick={() => {
-                sugg.setVal(v => {
-                  const cur = sugg.words[0];
-                  const idx = v.indexOf(sugg.pre + cur + sugg.sep);
-                  if (idx === -1) return v;
-                  return v.slice(0,idx) + sugg.pre + w + sugg.sep + v.slice(idx + sugg.pre.length + cur.length + sugg.sep.length);
-                });
-                sugg.setPos(sugg.posBase + w.length + 1);
-                setSugg(null);
-              }} style={{
-                padding:"4px 10px",
-                background: isCur ? "#C28640" : isEng ? "#1A2818" : "transparent",
-                border:"1px solid " + (isCur ? "#C28640" : isEng ? "#3A6030" : "#3A2510"),
+              <button key={i} onClick={pickWord} style={{
+                padding:"8px 16px",
+                background: isActive ? (isEng ? "#2A4828" : "#C28640") : isEng ? "#1A2818" : "transparent",
+                border:"1px solid " + (isActive ? (isEng ? "#70C060" : "#C28640") : isEng ? "#3A6030" : "#3A2510"),
                 borderRadius:6,
-                color: isCur ? "#0A0806" : isEng ? "#70C060" : "#DFCAA0",
-                fontSize: isEng ? 12 : 14, cursor:"pointer",
+                color: isActive ? (isEng ? "#A0E090" : "#0A0806") : isEng ? "#70C060" : "#DFCAA0",
+                fontSize: isEng ? 14 : 18, cursor:"pointer",
                 fontFamily: isEng ? '"DM Sans",sans-serif' : '"Noto Sans Devanagari","Cormorant Garamond",serif',
+                outline:"none",
               }}>
                 {isEng ? w + " (EN)" : w}
               </button>
