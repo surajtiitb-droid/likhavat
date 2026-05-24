@@ -271,7 +271,21 @@ export default function Rojanama() {
       setSuggIdx(next);
       return;
     }
-    if (e.key === "Escape" || (e.key === "Enter" && suggRef.current)) { setSugg(null); setSuggIdx(0); return; }
+    if (e.key === "Escape") { setSugg(null); setSuggIdx(0); return; }
+    if (e.key === "Enter" && suggRef.current) {
+      e.preventDefault();
+      const s = suggRef.current;
+      const w = s.words[suggIdxRef.current];
+      s.setVal(v => {
+        const cur = s.words[0];
+        const idx = v.indexOf(s.pre + cur + s.sep);
+        if (idx === -1) return v;
+        return v.slice(0, idx) + s.pre + w + s.sep + v.slice(idx + s.pre.length + cur.length + s.sep.length);
+      });
+      s.setPos(s.posBase + w.length + 1);
+      setSugg(null); setSuggIdx(0);
+      return;
+    }
     if (e.key !== " " && e.key !== "Enter") return;
     e.preventDefault();
     setSugg(null);
