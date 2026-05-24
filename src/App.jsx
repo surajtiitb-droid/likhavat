@@ -676,11 +676,13 @@ export default function Rojanama() {
                   </button>
                 )}
 
-                <div style={{ fontFamily:C.serif, fontSize:13, color:C.tx2,
-                  fontStyle:"italic", flex:1, minWidth:0,
-                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                  {fmtL(cur?.date || today())}
-                </div>
+                {!isMobile && (
+                  <div style={{ fontFamily:C.serif, fontSize:13, color:C.tx2,
+                    fontStyle:"italic", flex:1, minWidth:0,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {fmtL(cur?.date || today())}
+                  </div>
+                )}
 
                 {/* Moods — hide on very narrow screens via flex-wrap */}
                 <div style={{ display:"flex", gap:2 }}>
@@ -741,6 +743,12 @@ export default function Rojanama() {
                     fontWeight:600, color: hindi ? C.hi : C.accd }}>
                     {hindi ? "Hindi Mode" : "English Mode"}
                   </span>
+                  {isMobile && (
+                    <span style={{ fontSize:10, color:C.tx3, fontFamily:C.serif,
+                      fontStyle:"italic", marginLeft:"auto" }}>
+                      {fmtS(cur?.date || today())}
+                    </span>
+                  )}
                   {hindi && (
                     <span style={{ fontSize:10, color:C.tx3, fontStyle:"italic",
                       marginLeft: isMobile ? 0 : "auto" }}>
