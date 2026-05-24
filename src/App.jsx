@@ -324,6 +324,12 @@ export default function Rojanama() {
     if (!hindi) return;
 
     if (e.key === "Backspace") {
+      // Suggestions already visible → dismiss and let this backspace delete normally
+      if (suggRef.current) {
+        setSugg(null); setSuggIdx(0);
+        lastConv.current = null;
+        return; // no preventDefault → browser deletes char
+      }
       const pos = ref.current ? ref.current.selectionStart : val.length;
       const lc  = lastConv.current;
       if (lc && lc.setVal === setVal && pos === lc.pos) {
