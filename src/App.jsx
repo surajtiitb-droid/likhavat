@@ -129,6 +129,7 @@ export default function Rojanama() {
   const saveTimer  = useRef(null);
   const lastConv   = useRef(null); // {roman, words, pre, sep, pos}
   const suggRef    = useRef(null);
+  const suggIdxRef = useRef(0);
 
   const [entries,  setEntries]  = useState([]);
   const [cid,      setCid]      = useState(null);
@@ -148,6 +149,7 @@ export default function Rojanama() {
   const [sugg,     setSugg]     = useState(null);  // {pre,sep,after,words,posBase}
   const [suggIdx,  setSuggIdx]  = useState(0);
   useEffect(() => { suggRef.current = sugg; }, [sugg]);
+  useEffect(() => { suggIdxRef.current = suggIdx; }, [suggIdx]);
 
   // Sync refs
   useEffect(() => { eRef.current = entries; }, [entries]);
@@ -261,14 +263,12 @@ export default function Rojanama() {
 
     // Arrow key navigation through suggestions
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      if (!sugg) return;
+      if (!suggRef.current) return;
       e.preventDefault();
-      setSuggIdx(i => {
-        const next = e.key === "ArrowRight"
-          ? (i + 1) % sugg.words.length
-          : (i - 1 + sugg.words.length) % sugg.words.length;
-        return next;
-      });
+      const len = suggRef.current.words.length;
+      const cur = suggIdxRef.current;
+      const next = e.key === "ArrowRight" ? (cur + 1) % len : (cur - 1 + len) % len;
+      setSuggIdx(next);
       return;
     }
     if (e.key === "Escape" || (e.key === "Enter" && suggRef.current)) { setSugg(null); setSuggIdx(0); return; }
