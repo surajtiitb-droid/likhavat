@@ -10,26 +10,14 @@ const injectFonts = () => {
 };
 
 // ── Hindi Transliteration ─────────────────────────────────────────
-// Primary: Google Input Tools API (same engine as easyhindityping.com)
-// Fallback: local phonetic map using the site's exact key mappings
-//
-// Site mappings: k=क kh=ख g=ग gh=घ ch=च chh=छ j=ज jh=झ
-//   tt=ट th=ठ/थ d=ड/द dd=ड dh=ढ/ध nn=ण ny=ञ ng=ङ
-//   t=त th=थ d=द dh=ध n=न p=प ph=फ f=फ b=ब bh=भ m=म
-//   y=य r=र l=ल v=व w=व sh=श s=स h=ह
-//   ksh=क्ष tr=त्र gya=ज्ञ shr=श्र  .=।
-
 const LCONS = [
-  // 3-char combos first
   ["chh","छ"],["ksh","क्ष"],["shr","श्र"],
   ["gya","ज्ञ"],["jna","ज्ञ"],["ddh","ढ"],
-  // 2-char combos
   ["kh","ख"],["gh","घ"],["ch","च"],["jh","झ"],
   ["tt","ठ"],["th","थ"],["dd","ड"],["dh","ध"],
   ["nn","ण"],["ny","ञ"],["ng","ङ"],
   ["ph","फ"],["bh","भ"],["sh","श"],
   ["tr","त्र"],
-  // 1-char
   ["k","क"],["g","ग"],["j","ज"],["c","क"],
   ["t","त"],["d","द"],["n","न"],
   ["p","प"],["b","ब"],["m","म"],
@@ -119,42 +107,86 @@ const C = {
   deva:'"Noto Sans Devanagari", "Cormorant Garamond", serif',
 };
 
+// ── Export / Import helpers ────────────────────────────────────────
+function triggerDownload(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function entriesToMarkdown(entries) {
+  return entries
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map(e => {
+      const lines = [
+        `# ${e.title || "Untitled"}`,
+        ``,
+        `**Date:** ${fmtL(e.date)}`,
+        e.mood   ? `**Mood:** ${e.mood}` : null,
+        e.tags?.length ? `**Tags:** ${e.tags.map(t => "#" + t).join("  ")}` : null,
+        ``,
+        e.body || "_No content_",
+        ``,
+        `---`,
+      ].filter(l => l !== null);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
 // ── Component ──────────────────────────────────────────────────────
 export default function Rojanama() {
-  const taRef     = useRef(null);
-  const tiRef     = useRef(null);
-  const scrollRef = useRef(null);
-  const eRef      = useRef([]);   // entries ref (avoids stale closures)
-  const edRef     = useRef({});   // current edit state ref
+  const taRef      = useRef(null);
+  const tiRef      = useRef(null);
+  const scrollRef  = useRef(null);
+  const eRef       = useRef([]);
+  const edRef      = useRef({});
   const saveTimer  = useRef(null);
-  const lastConv   = useRef(null); // {roman, words, pre, sep, pos}
+  const lastConv   = useRef(null);
   const suggRef    = useRef(null);
   const suggIdxRef = useRef(0);
+  const importRef  = useRef(null);   // hidden file input
 
-  const [entries,  setEntries]  = useState([]);
-  const [cid,      setCid]      = useState(null);
-  const [hindi,    setHindi]    = useState(false);
-  const [q,        setQ]        = useState("");
-  const [title,    setTitle]    = useState("");
-  const [body,     setBody]     = useState("");
-  const [mood,     setMood]     = useState("");
-  const [tags,     setTags]     = useState([]);
-  const [tagInp,   setTagInp]   = useState("");
-  const [dirty,    setDirty]    = useState(false);
-  const [status,   setStatus]   = useState("idle");  // idle|saving|saved
-  const [delId,    setDelId]    = useState(null);
-  const [ready,    setReady]    = useState(false);
-  const [tPos,     setTPos]     = useState(null);
-  const [bPos,     setBPos]     = useState(null);
-  const [sugg,     setSugg]     = useState(null);  // {pre,sep,after,words,posBase}
-  const [suggIdx,  setSuggIdx]  = useState(0);
-  useEffect(() => { suggRef.current = sugg; }, [sugg]);
+  const [entries,    setEntries]    = useState([]);
+  const [cid,        setCid]        = useState(null);
+  const [hindi,      setHindi]      = useState(false);
+  const [q,          setQ]          = useState("");
+  const [title,      setTitle]      = useState("");
+  const [body,       setBody]       = useState("");
+  const [mood,       setMood]       = useState("");
+  const [tags,       setTags]       = useState([]);
+  const [tagInp,     setTagInp]     = useState("");
+  const [dirty,      setDirty]      = useState(false);
+  const [status,     setStatus]     = useState("idle");
+  const [delId,      setDelId]      = useState(null);
+  const [ready,      setReady]      = useState(false);
+  const [tPos,       setTPos]       = useState(null);
+  const [bPos,       setBPos]       = useState(null);
+  const [sugg,       setSugg]       = useState(null);
+  const [suggIdx,    setSuggIdx]    = useState(0);
+  const [exportMenu, setExportMenu] = useState(false);
+  const [importMsg,  setImportMsg]  = useState(null); // "Imported 12 entries"
+
+  // ── Mobile layout state ───────────────────────────────────────────
+  // 'list' = sidebar visible, 'editor' = editor visible
+  const [isMobile,   setIsMobile]   = useState(() => window.innerWidth <= 768);
+  const [mobileView, setMobileView] = useState("list");
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => { suggRef.current    = sugg;    }, [sugg]);
   useEffect(() => { suggIdxRef.current = suggIdx; }, [suggIdx]);
-
-  // Sync refs
-  useEffect(() => { eRef.current = entries; }, [entries]);
-  useEffect(() => { edRef.current = { cid, title, body, mood, tags, hindi }; },
-    [cid, title, body, mood, tags, hindi]);
+  useEffect(() => { eRef.current       = entries; }, [entries]);
+  useEffect(() => {
+    edRef.current = { cid, title, body, mood, tags, hindi };
+  }, [cid, title, body, mood, tags, hindi]);
 
   // Boot
   useEffect(() => {
@@ -209,6 +241,7 @@ export default function Rojanama() {
     setCid(e.id); setTitle(e.title || ""); setBody(e.body || "");
     setMood(e.mood || ""); setTags(e.tags || []);
     setHindi(e.lang === "hi"); setDirty(false); setStatus("idle");
+    setMobileView("editor");  // always switch to editor on mobile
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setTimeout(() => ((e.title ? taRef : tiRef).current || taRef.current)?.focus(), 80);
   }, []);
@@ -228,7 +261,7 @@ export default function Rojanama() {
   };
 
   const pick = async e => {
-    if (e.id === cid) return;
+    if (e.id === cid) { setMobileView("editor"); return; }
     clearTimeout(saveTimer.current);
     if (dirty) await doSave();
     openEntry(e);
@@ -238,17 +271,58 @@ export default function Rojanama() {
     const upd = eRef.current.filter(e => e.id !== id);
     setEntries(upd);
     await dbSave(upd);
-    if (cid === id) { setCid(null); setTitle(""); setBody(""); setMood(""); setTags([]); setDirty(false); }
+    if (cid === id) {
+      setCid(null); setTitle(""); setBody(""); setMood(""); setTags([]);
+      setDirty(false); setMobileView("list");
+    }
     setDelId(null);
   };
 
+  // ── Export / Import ────────────────────────────────────────────
+  const exportJSON = () => {
+    triggerDownload(
+      JSON.stringify(entries, null, 2),
+      `likhavat-backup-${today()}.json`,
+      "application/json"
+    );
+    setExportMenu(false);
+  };
+
+  const exportMarkdown = () => {
+    triggerDownload(
+      entriesToMarkdown(entries),
+      `likhavat-${today()}.md`,
+      "text/markdown"
+    );
+    setExportMenu(false);
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = "";
+    const text = await file.text();
+    try {
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) throw new Error("bad format");
+      const existingIds = new Set(eRef.current.map(x => x.id));
+      const fresh = data.filter(x => x.id && !existingIds.has(x.id));
+      const merged = [...fresh, ...eRef.current]
+        .sort((a, b) => b.date.localeCompare(a.date));
+      setEntries(merged);
+      await dbSave(merged);
+      setImportMsg(`✓ Imported ${fresh.length} new entr${fresh.length === 1 ? "y" : "ies"}`);
+      setTimeout(() => setImportMsg(null), 3500);
+    } catch {
+      setImportMsg("✗ Invalid backup file");
+      setTimeout(() => setImportMsg(null), 3500);
+    }
+  };
+
   // ── Hindi IME ─────────────────────────────────────────────────────
-  // Space/Enter: convert word via Google Input Tools (same as easyhindityping.com)
-  // Backspace right after conversion: show suggestions including original English
   const ime = async (e, val, setVal, ref, setPos) => {
     if (!hindi) return;
 
-    // Backspace → show suggestions for last converted word
     if (e.key === "Backspace") {
       const pos = ref.current ? ref.current.selectionStart : val.length;
       const lc  = lastConv.current;
@@ -261,12 +335,11 @@ export default function Rojanama() {
       return;
     }
 
-    // Arrow key navigation through suggestions
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       if (!suggRef.current) return;
       e.preventDefault();
-      const len = suggRef.current.words.length;
-      const cur = suggIdxRef.current;
+      const len  = suggRef.current.words.length;
+      const cur  = suggIdxRef.current;
       const next = e.key === "ArrowRight" ? (cur + 1) % len : (cur - 1 + len) % len;
       setSuggIdx(next);
       return;
@@ -299,7 +372,7 @@ export default function Rojanama() {
     const sep    = e.key === "Enter" ? "\n" : " ";
 
     if (word === ".") {
-      setVal(pre + "\u0964" + sep + after); setPos(pre.length + 2);
+      setVal(pre + "।" + sep + after); setPos(pre.length + 2);
       setDirty(true); return;
     }
     if (!word || !/[a-zA-Z]/.test(word)) {
@@ -307,16 +380,13 @@ export default function Rojanama() {
       setDirty(true); return;
     }
 
-    // Insert local result immediately (optimistic)
     const local = localTranslit(word);
     setVal(pre + local + sep + after);
     setPos(pre.length + local.length + 1);
     setDirty(true);
 
-    // Upgrade with Google API result
     const { ok, results } = await googleTranslit(word);
     const finalWords = ok ? results : [local];
-    // Always include the original English word at the end
     if (!finalWords.includes(word)) finalWords.push(word);
 
     const best = finalWords[0];
@@ -330,7 +400,6 @@ export default function Rojanama() {
     const finalPos = pre.length + best.length + 1;
     setPos(finalPos);
 
-    // Store for backspace recall
     lastConv.current = { roman: word, words: finalWords, pre, sep, after,
       posBase: pre.length, pos: finalPos, setVal, setPos };
   };
@@ -356,8 +425,7 @@ export default function Rojanama() {
     return s;
   })();
 
-  const totalWc = entries.reduce((s, e) => s + (e.wc || 0), 0);
-
+  const totalWc  = entries.reduce((s, e) => s + (e.wc || 0), 0);
   const filtered = q
     ? entries.filter(e =>
         (e.title || "").toLowerCase().includes(q.toLowerCase()) ||
@@ -370,7 +438,11 @@ export default function Rojanama() {
     (acc[e.date] = acc[e.date] || []).push(e); return acc;
   }, {});
   const gDates = Object.keys(grouped).sort().reverse();
-  const cur = entries.find(e => e.id === cid);
+  const cur    = entries.find(e => e.id === cid);
+
+  // ── Mobile visibility logic ────────────────────────────────────
+  const showSidebar = !isMobile || mobileView === "list";
+  const showMain    = !isMobile || mobileView === "editor";
 
   // ── Loading ────────────────────────────────────────────────────
   if (!ready) {
@@ -385,262 +457,365 @@ export default function Rojanama() {
   // ── Render ─────────────────────────────────────────────────────
   return (
     <div style={{ display:"flex", height:"100vh", overflow:"hidden",
-      background:C.bg, color:C.tx, fontFamily:C.sans }}>
+      background:C.bg, color:C.tx, fontFamily:C.sans, position:"relative" }}>
 
       {/* ══ SIDEBAR ══ */}
-      <div style={{ width:258, flexShrink:0, background:C.surf,
-        borderRight:`1px solid ${C.bdr}`, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      {showSidebar && (
+        <div style={{
+          width: isMobile ? "100%" : 258,
+          flexShrink:0, background:C.surf,
+          borderRight: isMobile ? "none" : `1px solid ${C.bdr}`,
+          display:"flex", flexDirection:"column", overflow:"hidden",
+        }}>
 
-        {/* Logo */}
-        <div style={{ padding:"20px 18px 14px", borderBottom:`1px solid ${C.bdr2}` }}>
-          <div style={{ fontFamily:C.serif, fontSize:22, fontWeight:600, color:C.acc }}>{"लिखावट"}</div>
-          <div style={{ fontSize:9, color:C.tx3, letterSpacing:"2.5px", textTransform:"uppercase", marginTop:4 }}>
-            Your Writing Space
+          {/* Logo */}
+          <div style={{ padding:"20px 18px 14px", borderBottom:`1px solid ${C.bdr2}` }}>
+            <div style={{ fontFamily:C.serif, fontSize:22, fontWeight:600, color:C.acc }}>{"लिखावट"}</div>
+            <div style={{ fontSize:9, color:C.tx3, letterSpacing:"2.5px", textTransform:"uppercase", marginTop:4 }}>
+              Your Writing Space
+            </div>
+          </div>
+
+          {/* New entry button */}
+          <button onClick={newEntry}
+            style={{ margin:"12px 16px 0", padding:"9px 0", background:C.acc, color:C.bg,
+              border:"none", borderRadius:8, fontSize:12, fontWeight:700, letterSpacing:0.4,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+            <span style={{ fontSize:18, lineHeight:1 }}>+</span>
+            New Entry
+          </button>
+
+          {/* Search */}
+          <div style={{ padding:"10px 16px 12px", borderBottom:`1px solid ${C.bdr2}` }}>
+            <input value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Search entries…"
+              style={{ width:"100%", marginTop:8, padding:"7px 10px", background:C.card,
+                border:`1px solid ${C.bdr2}`, borderRadius:7, color:C.tx,
+                fontSize:12, outline:"none", fontFamily:C.sans, boxSizing:"border-box" }} />
+          </div>
+
+          {/* List */}
+          <div style={{ flex:1, overflowY:"auto" }}>
+            {gDates.length === 0 && (
+              <div style={{ padding:"28px 18px", textAlign:"center", fontSize:12,
+                color:C.tx3, fontStyle:"italic", lineHeight:1.7 }}>
+                {q ? "No results." : "No entries yet.\nClick + New Entry."}
+              </div>
+            )}
+            {gDates.map(date => (
+              <div key={date}>
+                <div style={{ padding:"10px 16px 3px", fontSize:9, color:C.tx3,
+                  letterSpacing:"1.5px", textTransform:"uppercase", fontWeight:600 }}>
+                  {fmtS(date)}
+                </div>
+                {grouped[date].map(e => (
+                  <div key={e.id} onClick={() => pick(e)}
+                    style={{ padding:"9px 16px", cursor:"pointer", userSelect:"none",
+                      borderLeft:`2px solid ${cid === e.id ? C.acc : "transparent"}`,
+                      background: cid === e.id ? "rgba(194,134,64,0.08)" : "transparent" }}>
+                    <div style={{ fontSize:12, fontWeight:500, fontFamily:C.deva,
+                      color: cid === e.id ? C.acc2 : C.tx,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:2 }}>
+                      {e.title || <span style={{ fontStyle:"italic", color:C.tx3, fontFamily:C.sans }}>Untitled</span>}
+                    </div>
+                    <div style={{ fontSize:11, color:C.tx3,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {(e.body || "").slice(0, 52) || "—"}
+                    </div>
+                    <div style={{ display:"flex", gap:5, marginTop:5, alignItems:"center" }}>
+                      <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, fontWeight:700,
+                        background: e.lang === "hi" ? "rgba(204,101,53,0.12)" : "rgba(194,134,64,0.1)",
+                        color:      e.lang === "hi" ? C.hi : C.accd }}>
+                        {e.lang === "hi" ? "हिं" : "EN"}
+                      </span>
+                      {e.mood && <span style={{ fontSize:12 }}>{e.mood}</span>}
+                      {(e.wc || 0) > 0 && <span style={{ fontSize:9, color:C.tx3 }}>{e.wc}w</span>}
+                      {(e.tags || []).slice(0, 2).map(t => (
+                        <span key={t} style={{ fontSize:9, color:C.tx3 }}>#{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          {/* ── Export / Import toolbar ── */}
+          <div style={{ borderTop:`1px solid ${C.bdr2}`, padding:"8px 14px",
+            display:"flex", alignItems:"center", gap:6, position:"relative" }}>
+            {importMsg && (
+              <div style={{ position:"absolute", bottom:"100%", left:14, right:14,
+                background: importMsg.startsWith("✓") ? "#1A2A18" : "#2A1010",
+                border:`1px solid ${importMsg.startsWith("✓") ? "#3A6030" : "#6A2020"}`,
+                borderRadius:6, padding:"6px 10px", fontSize:10,
+                color: importMsg.startsWith("✓") ? "#80C070" : "#E06060",
+                marginBottom:4 }}>
+                {importMsg}
+              </div>
+            )}
+
+            {/* Export button + dropdown */}
+            <div style={{ position:"relative" }}>
+              <button onClick={() => setExportMenu(v => !v)}
+                title="Export entries"
+                style={{ padding:"5px 10px", background:"transparent",
+                  border:`1px solid ${C.bdr}`, borderRadius:6,
+                  color:C.tx2, fontSize:10, cursor:"pointer", fontFamily:C.sans,
+                  display:"flex", alignItems:"center", gap:4 }}>
+                ↑ Export
+              </button>
+              {exportMenu && (
+                <div style={{ position:"absolute", bottom:"calc(100% + 6px)", left:0,
+                  background:C.card, border:`1px solid ${C.bdr}`, borderRadius:8,
+                  overflow:"hidden", minWidth:140, zIndex:20,
+                  boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }}>
+                  <button onClick={exportJSON}
+                    style={{ width:"100%", padding:"10px 14px", background:"transparent",
+                      border:"none", borderBottom:`1px solid ${C.bdr2}`,
+                      color:C.tx, fontSize:11, cursor:"pointer", textAlign:"left",
+                      fontFamily:C.sans }}>
+                    📦 JSON Backup
+                  </button>
+                  <button onClick={exportMarkdown}
+                    style={{ width:"100%", padding:"10px 14px", background:"transparent",
+                      border:"none", color:C.tx, fontSize:11, cursor:"pointer",
+                      textAlign:"left", fontFamily:C.sans }}>
+                    📝 Markdown
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Import button */}
+            <button onClick={() => importRef.current?.click()}
+              title="Import JSON backup"
+              style={{ padding:"5px 10px", background:"transparent",
+                border:`1px solid ${C.bdr}`, borderRadius:6,
+                color:C.tx2, fontSize:10, cursor:"pointer", fontFamily:C.sans,
+                display:"flex", alignItems:"center", gap:4 }}>
+              ↓ Import
+            </button>
+            <input ref={importRef} type="file" accept=".json"
+              onChange={handleImport} style={{ display:"none" }} />
+
+            <div style={{ flex:1, textAlign:"right", fontSize:9, color:C.tx3 }}>
+              {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+            </div>
+          </div>
+
+          {/* Stats bar */}
+          <div style={{ display:"flex", borderTop:`1px solid ${C.bdr2}`, padding:"12px 0" }}>
+            {[[entries.length,"Entries"],[`${streak}${streak>0?" 🔥":""}`, "Streak"],
+              [totalWc > 999 ? `${(totalWc/1000).toFixed(1)}k` : totalWc, "Words"]].map(([n,l],i) => (
+              <div key={l} style={{ flex:1, textAlign:"center",
+                borderRight: i < 2 ? `1px solid ${C.bdr2}` : "none" }}>
+                <div style={{ fontFamily:C.serif, fontSize:18, fontWeight:500, color:C.acc, lineHeight:1 }}>{n}</div>
+                <div style={{ fontSize:9, color:C.tx3, letterSpacing:"1px", textTransform:"uppercase", marginTop:3 }}>{l}</div>
+              </div>
+            ))}
           </div>
         </div>
-
-        {/* New entry button */}
-        <button onClick={newEntry}
-          style={{ margin:"12px 16px 0", padding:"9px 0", background:C.acc, color:C.bg,
-            border:"none", borderRadius:8, fontSize:12, fontWeight:700, letterSpacing:0.4,
-            cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-          <span style={{ fontSize:18, lineHeight:1 }}>+</span>
-          New Entry
-        </button>
-
-        {/* Search */}
-        <div style={{ padding:"10px 16px 12px", borderBottom:`1px solid ${C.bdr2}` }}>
-          <input value={q} onChange={e => setQ(e.target.value)}
-            placeholder="Search entries…"
-            style={{ width:"100%", marginTop:8, padding:"7px 10px", background:C.card,
-              border:`1px solid ${C.bdr2}`, borderRadius:7, color:C.tx,
-              fontSize:12, outline:"none", fontFamily:C.sans, boxSizing:"border-box" }} />
-        </div>
-
-        {/* List */}
-        <div style={{ flex:1, overflowY:"auto" }}>
-          {gDates.length === 0 && (
-            <div style={{ padding:"28px 18px", textAlign:"center", fontSize:12,
-              color:C.tx3, fontStyle:"italic", lineHeight:1.7 }}>
-              {q ? "No results." : "No entries yet.\nClick + New Entry."}
-            </div>
-          )}
-          {gDates.map(date => (
-            <div key={date}>
-              <div style={{ padding:"10px 16px 3px", fontSize:9, color:C.tx3,
-                letterSpacing:"1.5px", textTransform:"uppercase", fontWeight:600 }}>
-                {fmtS(date)}
-              </div>
-              {grouped[date].map(e => (
-                <div key={e.id} onClick={() => pick(e)}
-                  style={{ padding:"9px 16px", cursor:"pointer", userSelect:"none",
-                    borderLeft:`2px solid ${cid === e.id ? C.acc : "transparent"}`,
-                    background: cid === e.id ? "rgba(194,134,64,0.08)" : "transparent" }}>
-                  <div style={{ fontSize:12, fontWeight:500, fontFamily:C.deva,
-                    color: cid === e.id ? C.acc2 : C.tx,
-                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:2 }}>
-                    {e.title || <span style={{ fontStyle:"italic", color:C.tx3, fontFamily:C.sans }}>Untitled</span>}
-                  </div>
-                  <div style={{ fontSize:11, color:C.tx3,
-                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                    {(e.body || "").slice(0, 52) || "—"}
-                  </div>
-                  <div style={{ display:"flex", gap:5, marginTop:5, alignItems:"center" }}>
-                    <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, fontWeight:700,
-                      background: e.lang === "hi" ? "rgba(204,101,53,0.12)" : "rgba(194,134,64,0.1)",
-                      color:      e.lang === "hi" ? C.hi : C.accd }}>
-                      {e.lang === "hi" ? "हिं" : "EN"}
-                    </span>
-                    {e.mood && <span style={{ fontSize:12 }}>{e.mood}</span>}
-                    {(e.wc || 0) > 0 && <span style={{ fontSize:9, color:C.tx3 }}>{e.wc}w</span>}
-                    {(e.tags || []).slice(0, 2).map(t => (
-                      <span key={t} style={{ fontSize:9, color:C.tx3 }}>#{t}</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {/* Stats bar */}
-        <div style={{ display:"flex", borderTop:`1px solid ${C.bdr2}`, padding:"12px 0" }}>
-          {[[entries.length,"Entries"],[`${streak}${streak>0?" 🔥":""}`, "Streak"],
-            [totalWc > 999 ? `${(totalWc/1000).toFixed(1)}k` : totalWc, "Words"]].map(([n,l],i) => (
-            <div key={l} style={{ flex:1, textAlign:"center",
-              borderRight: i < 2 ? `1px solid ${C.bdr2}` : "none" }}>
-              <div style={{ fontFamily:C.serif, fontSize:18, fontWeight:500, color:C.acc, lineHeight:1 }}>{n}</div>
-              <div style={{ fontSize:9, color:C.tx3, letterSpacing:"1px", textTransform:"uppercase", marginTop:3 }}>{l}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
       {/* ══ END SIDEBAR ══ */}
 
       {/* ══ MAIN ══ */}
-      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      {showMain && (
+        <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden",
+          width: isMobile ? "100%" : undefined }}>
 
-        {!cid ? (
-          /* Empty state */
-          <div style={{ flex:1, display:"flex", flexDirection:"column",
-            alignItems:"center", justifyContent:"center", textAlign:"center", padding:48 }}>
-            <div style={{ fontSize:56, marginBottom:18, opacity:0.1 }}>📖</div>
-            <div style={{ fontFamily:C.serif, fontSize:28, fontWeight:300, color:C.tx3, marginBottom:10 }}>
-              Begin your story
-            </div>
-            <div style={{ fontSize:13, color:C.tx3, opacity:0.55, fontStyle:"italic",
-              marginBottom:28, lineHeight:1.8 }}>
-              Write in English, Hindi, or both.
-            </div>
-            <button onClick={newEntry}
-              style={{ padding:"11px 28px", background:C.acc, color:C.bg, border:"none",
-                borderRadius:9, fontSize:13, fontWeight:700, cursor:"pointer", letterSpacing:0.4 }}>
-              + Start Writing
-            </button>
-          </div>
-        ) : (
-          <>
-            {/* Toolbar */}
-            <div style={{ padding:"12px 26px", borderBottom:`1px solid ${C.bdr2}`,
-              display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-              <div style={{ fontFamily:C.serif, fontSize:13, color:C.tx2, fontStyle:"italic", flex:1 }}>
-                {fmtL(cur?.date || today())}
-              </div>
-
-              {/* Moods */}
-              <div style={{ display:"flex", gap:2 }}>
-                {MOODS.map(m => (
-                  <button key={m} title={m}
-                    onClick={() => { setMood(mood === m ? "" : m); setDirty(true); }}
-                    style={{ fontSize:14, padding:"2px 3px", background:"transparent",
-                      border:"none", cursor:"pointer",
-                      opacity: mood === m ? 1 : 0.22,
-                      transform: mood === m ? "scale(1.2)" : "scale(1)",
-                      transition:"all 0.12s" }}>
-                    {m}
-                  </button>
-                ))}
-              </div>
-
-              {/* Language toggle */}
-              <div style={{ display:"flex", background:C.card,
-                border:`1px solid ${C.bdr}`, borderRadius:8, overflow:"hidden" }}>
-                <button onClick={() => setHindi(false)}
-                  style={{ padding:"5px 13px", fontSize:11, fontWeight:700, letterSpacing:0.5,
-                    border:"none", cursor:"pointer",
-                    background: !hindi ? C.acc : "transparent",
-                    color:      !hindi ? C.bg  : C.tx3 }}>
-                  EN
+          {!cid ? (
+            /* Empty state */
+            <div style={{ flex:1, display:"flex", flexDirection:"column",
+              alignItems:"center", justifyContent:"center", textAlign:"center", padding:48 }}>
+              {/* Back button on mobile empty state */}
+              {isMobile && (
+                <button onClick={() => setMobileView("list")}
+                  style={{ position:"absolute", top:16, left:16, padding:"6px 12px",
+                    background:"transparent", border:`1px solid ${C.bdr}`,
+                    borderRadius:6, color:C.tx2, fontSize:12, cursor:"pointer",
+                    fontFamily:C.sans, display:"flex", alignItems:"center", gap:4 }}>
+                  ← List
                 </button>
-                <button onClick={() => setHindi(true)}
-                  style={{ padding:"5px 13px", fontSize:12, fontWeight:600,
-                    border:"none", cursor:"pointer", fontFamily:C.deva,
-                    background: hindi ? C.hi      : "transparent",
-                    color:      hindi ? "#fff3ee" : C.tx3 }}>
-                  {"हिंदी"}
-                </button>
+              )}
+              <div style={{ fontSize:56, marginBottom:18, opacity:0.1 }}>📖</div>
+              <div style={{ fontFamily:C.serif, fontSize:28, fontWeight:300, color:C.tx3, marginBottom:10 }}>
+                Begin your story
               </div>
-            </div>
-
-            {/* Scroll area */}
-            <div ref={scrollRef} style={{ flex:1, overflowY:"auto", padding:"26px 28px 20px" }}>
-
-              {/* Title */}
-              <input ref={tiRef} value={title}
-                onChange={e => { setTitle(e.target.value); setDirty(true); }}
-                onKeyDown={e => ime(e, title, setTitle, tiRef, setTPos)}
-                placeholder="Title…"
-                style={{ width:"100%", boxSizing:"border-box", fontFamily:C.deva,
-                  fontSize:30, fontWeight:300, color:C.tx,
-                  background:"transparent", border:"none", outline:"none",
-                  lineHeight:1.3, marginBottom:6 }} />
-
-              {/* Lang indicator */}
-              <div style={{ display:"flex", alignItems:"center", gap:8,
-                padding:"9px 0", borderBottom:`1px solid ${C.bdr2}`, marginBottom:20 }}>
-                <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
-                  background: hindi ? C.hi : C.acc, flexShrink:0 }}></span>
-                <span style={{ fontSize:10, letterSpacing:"1.5px", textTransform:"uppercase",
-                  fontWeight:600, color: hindi ? C.hi : C.accd }}>
-                  {hindi ? "Hindi Mode" : "English Mode"}
-                </span>
-                {hindi && (
-                  <span style={{ fontSize:10, color:C.tx3, fontStyle:"italic", marginLeft:"auto" }}>
-                    {"Powered by Google Input Tools · type phonetically · press space to convert"}
-                  </span>
-                )}
+              <div style={{ fontSize:13, color:C.tx3, opacity:0.55, fontStyle:"italic",
+                marginBottom:28, lineHeight:1.8 }}>
+                Write in English, Hindi, or both.
               </div>
-
-              {/* Body */}
-              <textarea ref={taRef} value={body}
-                onChange={e => { setBody(e.target.value); setDirty(true); }}
-                onKeyDown={e => ime(e, body, setBody, taRef, setBPos)}
-                placeholder={hindi
-                  ? "Yahan likhiye… (space dabane par convert hoga)"
-                  : "Write freely…"}
-                style={{ width:"100%", boxSizing:"border-box", minHeight:340,
-                  fontSize:17, lineHeight:1.9, color:C.tx,
-                  background:"transparent", border:"none", outline:"none",
-                  resize:"none", fontFamily:C.deva }} />
-
-              {/* Tags */}
-              <div style={{ marginTop:20, paddingTop:16, borderTop:`1px solid ${C.bdr2}` }}>
-                <div style={{ fontSize:9, letterSpacing:"2px", textTransform:"uppercase",
-                  color:C.tx3, marginBottom:9, fontWeight:600 }}>
-                  Tags
-                </div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6, alignItems:"center" }}>
-                  {tags.map(t => (
-                    <span key={t}
-                      style={{ padding:"2px 9px", background:C.card,
-                        border:`1px solid ${C.bdr}`, borderRadius:20,
-                        fontSize:11, color:C.tx2, display:"flex", alignItems:"center", gap:4 }}>
-                      #{t}
-                      <span onClick={() => { setTags(tags.filter(x => x !== t)); setDirty(true); }}
-                        style={{ cursor:"pointer", color:C.tx3, fontSize:15, lineHeight:1 }}>
-                        ×
-                      </span>
-                    </span>
-                  ))}
-                  <input value={tagInp} onChange={e => setTagInp(e.target.value)} onKeyDown={addTag}
-                    placeholder="+ add tag"
-                    style={{ background:"transparent", border:"none", outline:"none",
-                      fontSize:11, color:C.tx2, fontFamily:C.sans, width:80 }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div style={{ padding:"10px 26px", borderTop:`1px solid ${C.bdr2}`,
-              display:"flex", alignItems:"center", gap:14, flexShrink:0 }}>
-              <div style={{ flex:1, display:"flex", gap:14, fontSize:10, color:C.tx3 }}>
-                <span>{wc(body)} words</span>
-                <span>{body.length} chars</span>
-                {mood && <span>Feeling {mood}</span>}
-              </div>
-              <span style={{ fontSize:10,
-                color: status === "saving" ? C.accd
-                     : status === "saved"  ? "#4A8A3A"
-                     : dirty ? C.tx3 : "transparent",
-                transition:"color 0.3s" }}>
-                {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : dirty ? "● Unsaved" : ""}
-              </span>
-              <button onClick={() => setDelId(cid)}
-                style={{ padding:"5px 10px", background:"transparent",
-                  border:"1px solid rgba(140,30,30,0.25)", borderRadius:6,
-                  color:"rgba(180,60,60,0.6)", fontSize:10, cursor:"pointer",
-                  fontFamily:C.sans }}>
-                Delete
+              <button onClick={newEntry}
+                style={{ padding:"11px 28px", background:C.acc, color:C.bg, border:"none",
+                  borderRadius:9, fontSize:13, fontWeight:700, cursor:"pointer", letterSpacing:0.4 }}>
+                + Start Writing
               </button>
             </div>
-          </>
-        )}
-      </div>
+          ) : (
+            <>
+              {/* Toolbar */}
+              <div style={{ padding: isMobile ? "10px 14px" : "12px 26px",
+                borderBottom:`1px solid ${C.bdr2}`,
+                display:"flex", alignItems:"center", gap:10, flexShrink:0, flexWrap:"wrap" }}>
+
+                {/* Back button on mobile */}
+                {isMobile && (
+                  <button onClick={() => setMobileView("list")}
+                    style={{ padding:"5px 10px", background:"transparent",
+                      border:`1px solid ${C.bdr}`, borderRadius:6,
+                      color:C.tx2, fontSize:12, cursor:"pointer",
+                      fontFamily:C.sans, display:"flex", alignItems:"center", gap:4,
+                      flexShrink:0 }}>
+                    ← Back
+                  </button>
+                )}
+
+                <div style={{ fontFamily:C.serif, fontSize:13, color:C.tx2,
+                  fontStyle:"italic", flex:1, minWidth:0,
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {fmtL(cur?.date || today())}
+                </div>
+
+                {/* Moods — hide on very narrow screens via flex-wrap */}
+                <div style={{ display:"flex", gap:2 }}>
+                  {MOODS.map(m => (
+                    <button key={m} title={m}
+                      onClick={() => { setMood(mood === m ? "" : m); setDirty(true); }}
+                      style={{ fontSize:14, padding:"2px 3px", background:"transparent",
+                        border:"none", cursor:"pointer",
+                        opacity: mood === m ? 1 : 0.22,
+                        transform: mood === m ? "scale(1.2)" : "scale(1)",
+                        transition:"all 0.12s" }}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Language toggle */}
+                <div style={{ display:"flex", background:C.card,
+                  border:`1px solid ${C.bdr}`, borderRadius:8, overflow:"hidden", flexShrink:0 }}>
+                  <button onClick={() => setHindi(false)}
+                    style={{ padding:"5px 13px", fontSize:11, fontWeight:700, letterSpacing:0.5,
+                      border:"none", cursor:"pointer",
+                      background: !hindi ? C.acc : "transparent",
+                      color:      !hindi ? C.bg  : C.tx3 }}>
+                    EN
+                  </button>
+                  <button onClick={() => setHindi(true)}
+                    style={{ padding:"5px 13px", fontSize:12, fontWeight:600,
+                      border:"none", cursor:"pointer", fontFamily:C.deva,
+                      background: hindi ? C.hi      : "transparent",
+                      color:      hindi ? "#fff3ee" : C.tx3 }}>
+                    {"हिंदी"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Scroll area */}
+              <div ref={scrollRef} style={{ flex:1, overflowY:"auto",
+                padding: isMobile ? "18px 16px 16px" : "26px 28px 20px" }}>
+
+                {/* Title */}
+                <input ref={tiRef} value={title}
+                  onChange={e => { setTitle(e.target.value); setDirty(true); }}
+                  onKeyDown={e => ime(e, title, setTitle, tiRef, setTPos)}
+                  placeholder="Title…"
+                  style={{ width:"100%", boxSizing:"border-box", fontFamily:C.deva,
+                    fontSize: isMobile ? 24 : 30, fontWeight:300, color:C.tx,
+                    background:"transparent", border:"none", outline:"none",
+                    lineHeight:1.3, marginBottom:6 }} />
+
+                {/* Lang indicator */}
+                <div style={{ display:"flex", alignItems:"center", gap:8,
+                  padding:"9px 0", borderBottom:`1px solid ${C.bdr2}`, marginBottom:20,
+                  flexWrap:"wrap" }}>
+                  <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
+                    background: hindi ? C.hi : C.acc, flexShrink:0 }}></span>
+                  <span style={{ fontSize:10, letterSpacing:"1.5px", textTransform:"uppercase",
+                    fontWeight:600, color: hindi ? C.hi : C.accd }}>
+                    {hindi ? "Hindi Mode" : "English Mode"}
+                  </span>
+                  {hindi && (
+                    <span style={{ fontSize:10, color:C.tx3, fontStyle:"italic",
+                      marginLeft: isMobile ? 0 : "auto" }}>
+                      {"type phonetically · space to convert"}
+                    </span>
+                  )}
+                </div>
+
+                {/* Body */}
+                <textarea ref={taRef} value={body}
+                  onChange={e => { setBody(e.target.value); setDirty(true); }}
+                  onKeyDown={e => ime(e, body, setBody, taRef, setBPos)}
+                  placeholder={hindi
+                    ? "Yahan likhiye… (space dabane par convert hoga)"
+                    : "Write freely…"}
+                  style={{ width:"100%", boxSizing:"border-box",
+                    minHeight: isMobile ? 260 : 340,
+                    fontSize: isMobile ? 15 : 17, lineHeight:1.9, color:C.tx,
+                    background:"transparent", border:"none", outline:"none",
+                    resize:"none", fontFamily:C.deva }} />
+
+                {/* Tags */}
+                <div style={{ marginTop:20, paddingTop:16, borderTop:`1px solid ${C.bdr2}` }}>
+                  <div style={{ fontSize:9, letterSpacing:"2px", textTransform:"uppercase",
+                    color:C.tx3, marginBottom:9, fontWeight:600 }}>
+                    Tags
+                  </div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6, alignItems:"center" }}>
+                    {tags.map(t => (
+                      <span key={t}
+                        style={{ padding:"2px 9px", background:C.card,
+                          border:`1px solid ${C.bdr}`, borderRadius:20,
+                          fontSize:11, color:C.tx2, display:"flex", alignItems:"center", gap:4 }}>
+                        #{t}
+                        <span onClick={() => { setTags(tags.filter(x => x !== t)); setDirty(true); }}
+                          style={{ cursor:"pointer", color:C.tx3, fontSize:15, lineHeight:1 }}>
+                          ×
+                        </span>
+                      </span>
+                    ))}
+                    <input value={tagInp} onChange={e => setTagInp(e.target.value)} onKeyDown={addTag}
+                      placeholder="+ add tag"
+                      style={{ background:"transparent", border:"none", outline:"none",
+                        fontSize:11, color:C.tx2, fontFamily:C.sans, width:80 }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: isMobile ? "8px 16px" : "10px 26px",
+                borderTop:`1px solid ${C.bdr2}`,
+                display:"flex", alignItems:"center", gap:14, flexShrink:0 }}>
+                <div style={{ flex:1, display:"flex", gap:14, fontSize:10, color:C.tx3, flexWrap:"wrap" }}>
+                  <span>{wc(body)} words</span>
+                  <span>{body.length} chars</span>
+                  {mood && <span>Feeling {mood}</span>}
+                </div>
+                <span style={{ fontSize:10,
+                  color: status === "saving" ? C.accd
+                       : status === "saved"  ? "#4A8A3A"
+                       : dirty ? C.tx3 : "transparent",
+                  transition:"color 0.3s" }}>
+                  {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : dirty ? "● Unsaved" : ""}
+                </span>
+                <button onClick={() => setDelId(cid)}
+                  style={{ padding:"5px 10px", background:"transparent",
+                    border:"1px solid rgba(140,30,30,0.25)", borderRadius:6,
+                    color:"rgba(180,60,60,0.6)", fontSize:10, cursor:"pointer",
+                    fontFamily:C.sans }}>
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {/* ══ END MAIN ══ */}
 
       {/* ══ SUGGESTIONS POPUP ══ */}
       {sugg && (
-        <div style={{ position:"absolute", bottom:52, left:"50%", transform:"translateX(-50%)",
+        <div style={{ position:"fixed", bottom:52, left:"50%", transform:"translateX(-50%)",
           background:"#1A1208", border:"1px solid #C28640", borderRadius:10,
           padding:"14px 10px", display:"flex", alignItems:"center", gap:8, zIndex:40,
           boxShadow:"0 4px 24px rgba(0,0,0,0.6)", maxWidth:"92vw", flexWrap:"wrap" }}>
@@ -649,14 +824,15 @@ export default function Rojanama() {
             ←→ navigate · Enter select
           </span>
           {sugg.words.map((w, i) => {
-            const isEng = /^[a-zA-Z]+$/.test(w);
+            const isEng    = /^[a-zA-Z]+$/.test(w);
             const isActive = i === suggIdx;
             const pickWord = () => {
               sugg.setVal(v => {
                 const cur = sugg.words[0];
                 const idx = v.indexOf(sugg.pre + cur + sugg.sep);
                 if (idx === -1) return v;
-                return v.slice(0,idx) + sugg.pre + w + sugg.sep + v.slice(idx + sugg.pre.length + cur.length + sugg.sep.length);
+                return v.slice(0,idx) + sugg.pre + w + sugg.sep
+                  + v.slice(idx + sugg.pre.length + cur.length + sugg.sep.length);
               });
               sugg.setPos(sugg.posBase + w.length + 1);
               setSugg(null);
@@ -686,7 +862,7 @@ export default function Rojanama() {
 
       {/* ══ DELETE MODAL ══ */}
       {delId && (
-        <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.8)",
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.8)",
           display:"flex", alignItems:"center", justifyContent:"center", zIndex:50 }}>
           <div style={{ background:C.card, border:`1px solid ${C.bdr}`,
             borderRadius:14, padding:26, maxWidth:300, width:"88%" }}>
@@ -712,6 +888,12 @@ export default function Rojanama() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Close export menu on outside click */}
+      {exportMenu && (
+        <div onClick={() => setExportMenu(false)}
+          style={{ position:"fixed", inset:0, zIndex:10 }} />
       )}
 
     </div>
