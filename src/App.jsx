@@ -397,9 +397,17 @@ export default function Rojanama() {
     // Backspace fallback for mobile (keydown fires "Unidentified" on some keyboards)
     if (e.inputType === "deleteContentBackward") {
       if (suggRef.current) {
+        // Second backspace: dismiss suggestions, allow deletion to proceed
         setSugg(null); setSuggIdx(0);
         lastConv.current = null;
-        // no preventDefault → deletion proceeds normally
+        return; // no preventDefault → char gets deleted
+      }
+      // First backspace: show suggestions if cursor is right after converted word
+      const pos = ref.current ? ref.current.selectionStart : val.length;
+      const lc  = lastConv.current;
+      if (lc && lc.setVal === setVal && pos === lc.pos) {
+        e.preventDefault(); // block deletion
+        setSugg(lc); setSuggIdx(0);
       }
       return;
     }
@@ -454,11 +462,6 @@ export default function Rojanama() {
     lastConv.current = { roman: word, words: finalWords, pre, sep, after,
       posBase: pre.length, pos: finalPos, setVal, setPos };
 
-    // Mobile: show suggestions immediately after conversion (no backspace needed)
-    if (isMobile && finalWords.length > 1) {
-      setSugg(lastConv.current);
-      setSuggIdx(0);
-    }
   };
 
   const addTag = e => {
