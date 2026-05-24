@@ -319,16 +319,17 @@ export default function Rojanama() {
     }
   };
 
-  // ── Hindi IME ─────────────────────────────────────────────────────
-  const ime = async (e, val, setVal, ref, setPos) => {
+  // ── Hindi IME: keydown — backspace / arrows / escape / suggestion-enter ──
+  // Space+Enter transliteration moved to imeInput (onBeforeInput) so it
+  // fires on mobile virtual keyboards too (which send key="Unidentified").
+  const ime = (e, val, setVal, ref, setPos) => {
     if (!hindi) return;
 
     if (e.key === "Backspace") {
-      // Suggestions already visible → dismiss and let this backspace delete normally
       if (suggRef.current) {
         setSugg(null); setSuggIdx(0);
         lastConv.current = null;
-        return; // no preventDefault → browser deletes char
+        return;
       }
       const pos = ref.current ? ref.current.selectionStart : val.length;
       const lc  = lastConv.current;
@@ -350,7 +351,10 @@ export default function Rojanama() {
       setSuggIdx(next);
       return;
     }
+
     if (e.key === "Escape") { setSugg(null); setSuggIdx(0); return; }
+
+    // Enter while suggestions visible → pick highlighted word
     if (e.key === "Enter" && suggRef.current) {
       e.preventDefault();
       const s = suggRef.current;
@@ -359,23 +363,37 @@ export default function Rojanama() {
         const cur = s.words[0];
         const idx = v.indexOf(s.pre + cur + s.sep);
         if (idx === -1) return v;
-        return v.slice(0, idx) + s.pre + w + s.sep + v.slice(idx + s.pre.length + cur.length + s.sep.length);
+        return v.slice(0, idx) + s.pre + w + s.sep
+          + v.slice(idx + s.pre.length + cur.length + s.sep.length);
       });
       s.setPos(s.posBase + w.length + 1);
       setSugg(null); setSuggIdx(0);
-      return;
     }
-    if (e.key !== " " && e.key !== "Enter") return;
+  };
+
+  // ── Hindi IME: beforeinput — space / enter → transliterate ────────────
+  // onBeforeInput fires on both desktop and mobile virtual keyboards.
+  // e.preventDefault() here reliably stops the raw character from inserting.
+  const imeInput = async (e, val, setVal, ref, setPos) => {
+    if (!hindi) return;
+
+    const isSpace     = e.data === " ";
+    const isLineBreak = e.inputType === "insertLineBreak";
+    if (!isSpace && !isLineBreak) return;
+
+    // If suggestions visible, Enter is handled by onKeyDown — skip here
+    if (isLineBreak && suggRef.current) return;
+
     e.preventDefault();
     setSugg(null);
 
+    const sep    = isLineBreak ? "\n" : " ";
     const pos    = ref.current ? ref.current.selectionStart : val.length;
     const before = val.slice(0, pos);
     const after  = val.slice(pos);
     const si     = Math.max(before.lastIndexOf(" "), before.lastIndexOf("\n"));
     const word   = before.slice(si + 1);
     const pre    = before.slice(0, si + 1);
-    const sep    = e.key === "Enter" ? "\n" : " ";
 
     if (word === ".") {
       setVal(pre + "।" + sep + after); setPos(pre.length + 2);
@@ -400,12 +418,12 @@ export default function Rojanama() {
       setVal(v => {
         const idx = v.indexOf(pre + local + sep);
         if (idx === -1) return v;
-        return v.slice(0, idx) + pre + best + sep + v.slice(idx + pre.length + local.length + sep.length);
+        return v.slice(0, idx) + pre + best + sep
+          + v.slice(idx + pre.length + local.length + sep.length);
       });
     }
     const finalPos = pre.length + best.length + 1;
     setPos(finalPos);
-
     lastConv.current = { roman: word, words: finalWords, pre, sep, after,
       posBase: pre.length, pos: finalPos, setVal, setPos };
   };
@@ -727,6 +745,7 @@ export default function Rojanama() {
                 <input ref={tiRef} value={title}
                   onChange={e => { setTitle(e.target.value); setDirty(true); }}
                   onKeyDown={e => ime(e, title, setTitle, tiRef, setTPos)}
+                  onBeforeInput={e => imeInput(e, title, setTitle, tiRef, setTPos)}
                   placeholder="Title…"
                   style={{ width:"100%", boxSizing:"border-box", fontFamily:C.deva,
                     fontSize: isMobile ? 24 : 30, fontWeight:300, color:C.tx,
@@ -761,6 +780,7 @@ export default function Rojanama() {
                 <textarea ref={taRef} value={body}
                   onChange={e => { setBody(e.target.value); setDirty(true); }}
                   onKeyDown={e => ime(e, body, setBody, taRef, setBPos)}
+                  onBeforeInput={e => imeInput(e, body, setBody, taRef, setBPos)}
                   placeholder={hindi
                     ? "Yahan likhiye… (space dabane par convert hoga)"
                     : "Write freely…"}
